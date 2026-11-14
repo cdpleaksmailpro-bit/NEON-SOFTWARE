@@ -1,0 +1,14 @@
+
+{
+  "name": "neon-software",
+  "version": "1.0.0",
+  "description": "NEON SOFTWARE Discord Verification",
+  "main": "index.js.txt",
+  "scripts": {
+    "start": "node index.js.txt"
+  },
+  "dependencies": {
+    "discord.js": "^14.19.3",
+    "express": "^4.21.2"
+  }
+}
