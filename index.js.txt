@@ -1,0 +1,438 @@
+
+const express = require("express");
+const crypto = require("crypto");
+
+const {
+  Client,
+  GatewayIntentBits,
+  EmbedBuilder,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle
+} = require("discord.js");
+
+// =====================================
+// NEON SOFTWARE CONFIGURATION
+// =====================================
+
+const CONFIG = {
+  PORT: process.env.PORT || 3000,
+
+  CLIENT_ID: "1570948368375615568",
+  CLIENT_SECRET: process.env.CLIENT_SECRET,
+
+  REDIRECT_URI: process.env.REDIRECT_URI,
+  BASE_URL: process.env.BASE_URL,
+
+  BOT_TOKEN: process.env.BOT_TOKEN,
+
+  GUILD_ID: "1560996039283052544",
+  ROLE_ID: "1561351951302664212",
+  VERIFY_CHANNEL_ID: "1570953903585890365"
+};
+
+// =====================================
+// CONFIGURATION CHECK
+// =====================================
+
+if (
+  !CONFIG.CLIENT_SECRET ||
+  !CONFIG.BOT_TOKEN ||
+  !CONFIG.REDIRECT_URI ||
+  !CONFIG.BASE_URL
+) {
+  console.error("ERROR: Missing Render environment variables.");
+  process.exit(1);
+}
+
+const app = express();
+
+const bot = new Client({
+  intents: [GatewayIntentBits.Guilds]
+});
+
+const pendingStates = new Map();
+
+// =====================================
+// HTML SECURITY
+// =====================================
+
+function escapeHTML(value) {
+  return String(value).replace(/[&<>"']/g, c => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;"
+  })[c]);
+}
+
+// =====================================
+// WEBSITE DESIGN
+// =====================================
+
+function page(title, content) {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${escapeHTML(title)} | NEON SOFTWARE</title>
+
+<style>
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #080808;
+  color: #eeeeee;
+  font-family: Arial, sans-serif;
+  padding: 20px;
+}
+
+.card {
+  width: 100%;
+  max-width: 390px;
+  padding: 35px;
+  background: #101010;
+  border: 1px solid #242424;
+  border-radius: 8px;
+  text-align: center;
+}
+
+.logo {
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: 3px;
+  color: white;
+  margin-bottom: 38px;
+}
+
+h2 {
+  font-size: 21px;
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+
+p {
+  color: #858585;
+  font-size: 13px;
+  line-height: 1.8;
+}
+
+button {
+  width: 100%;
+  padding: 14px;
+  margin-top: 25px;
+  background: white;
+  color: #080808;
+  border: 1px solid white;
+  border-radius: 5px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: 0.2s;
+}
+
+button:hover {
+  background: #cccccc;
+}
+
+.success {
+  color: white;
+}
+
+.footer {
+  margin-top: 35px;
+  padding-top: 18px;
+  border-top: 1px solid #242424;
+  color: #555555;
+  font-size: 10px;
+  letter-spacing: 1px;
+}
+</style>
+</head>
+
+<body>
+<div class="card">
+  <div class="logo">NEON SOFTWARE</div>
+  ${content}
+  <div class="footer">NEON SOFTWARE</div>
+</div>
+</body>
+</html>`;
+}
+
+// =====================================
+// HOME
+// =====================================
+
+app.get("/", (req, res) => {
+  res.send(page("Verification", `
+    <div>🔒</div>
+    <h2>Account Verification</h2>
+    <p>
+      Welcome to NEON SOFTWARE.<br>
+      Please verify your Discord account
+      to access our community.
+    </p>
+    <button onclick="location.href='/login'">
+      Verify with Discord
+    </button>
+  `));
+});
+
+// =====================================
+// OAUTH LOGIN
+// =====================================
+
+app.get("/login", (req, res) => {
+  const state = crypto.randomBytes(32).toString("hex");
+
+  pendingStates.set(state, Date.now());
+
+  const params = new URLSearchParams({
+    client_id: CONFIG.CLIENT_ID,
+    redirect_uri: CONFIG.REDIRECT_URI,
+    response_type: "code",
+    scope: "identify",
+    state
+  });
+
+  res.redirect(
+    "https://discord.com/oauth2/authorize?" + params
+  );
+});
+
+// =====================================
+// DISCORD CALLBACK
+// =====================================
+
+app.get("/callback", async (req, res) => {
+  try {
+    const { code, state, error } = req.query;
+
+    if (error) {
+      return res.status(400).send(page("Cancelled", `
+        <h2>Verification cancelled</h2>
+        <p>You cancelled Discord authorization.</p>
+        <button onclick="location.href='/'">Try again</button>
+      `));
+    }
+
+    if (
+      typeof code !== "string" ||
+      typeof state !== "string" ||
+      !pendingStates.has(state) ||
+      Date.now() - pendingStates.get(state) > 300000
+    ) {
+      if (typeof state === "string") {
+        pendingStates.delete(state);
+      }
+
+      return res.status(400).send(page("Error", `
+        <h2>Invalid request</h2>
+        <p>Your verification request expired or is invalid.</p>
+        <button onclick="location.href='/'">Try again</button>
+      `));
+    }
+
+    pendingStates.delete(state);
+
+    // EXCHANGE OAUTH CODE
+
+    const tokenResponse = await fetch(
+      "https://discord.com/api/v10/oauth2/token",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded"
+        },
+        body: new URLSearchParams({
+          client_id: CONFIG.CLIENT_ID,
+          client_secret: CONFIG.CLIENT_SECRET,
+          grant_type: "authorization_code",
+          code,
+          redirect_uri: CONFIG.REDIRECT_URI
+        })
+      }
+    );
+
+    const tokens = await tokenResponse.json();
+
+    if (!tokenResponse.ok || !tokens.access_token) {
+      console.error("OAuth error:", tokens);
+      throw new Error("OAuth authentication failed");
+    }
+
+    // GET USER
+
+    const userResponse = await fetch(
+      "https://discord.com/api/v10/users/@me",
+      {
+        headers: {
+          Authorization: "Bearer " + tokens.access_token
+        }
+      }
+    );
+
+    const user = await userResponse.json();
+
+    if (!userResponse.ok || !user.id) {
+      throw new Error("Unable to retrieve Discord user");
+    }
+
+    // FETCH GUILD
+
+    const guild = await bot.guilds.fetch(CONFIG.GUILD_ID);
+
+    let member;
+
+    try {
+      member = await guild.members.fetch(user.id);
+    } catch {
+      return res.status(403).send(page("Not a member", `
+        <h2>Server membership required</h2>
+        <p>
+          Join the NEON SOFTWARE Discord server
+          before verifying your account.
+        </p>
+        <button onclick="location.href='/'">Try again</button>
+      `));
+    }
+
+    // ASSIGN ROLE
+
+    if (!member.roles.cache.has(CONFIG.ROLE_ID)) {
+      await member.roles.add(
+        CONFIG.ROLE_ID,
+        "NEON SOFTWARE account verification"
+      );
+    }
+
+    console.log("VERIFIED USER:", user.username);
+
+    res.send(page("Success", `
+      <div class="success">✓</div>
+      <h2 class="success">Success!</h2>
+      <p>
+        Welcome, ${escapeHTML(user.username)}.<br>
+        Your Discord account has been verified successfully.
+      </p>
+      <p>You can now return to Discord.</p>
+    `));
+
+  } catch (error) {
+    console.error("Verification error:", error);
+
+    res.status(500).send(page("Error", `
+      <h2>Verification failed</h2>
+      <p>Please try again or contact the server administration.</p>
+      <button onclick="location.href='/'">Try again</button>
+    `));
+  }
+});
+
+// =====================================
+// CLEAN EXPIRED STATES
+// =====================================
+
+setInterval(() => {
+  const now = Date.now();
+
+  for (const [state, timestamp] of pendingStates.entries()) {
+    if (now - timestamp > 300000) {
+      pendingStates.delete(state);
+    }
+  }
+}, 60000);
+
+// =====================================
+// DISCORD PANEL
+// =====================================
+
+bot.once("clientReady", async () => {
+  console.log("NEON SOFTWARE BOT CONNECTED");
+
+  try {
+    const channel = await bot.channels.fetch(
+      CONFIG.VERIFY_CHANNEL_ID
+    );
+
+    if (!channel || !channel.isTextBased() || !channel.messages) {
+      throw new Error("Verification channel not found.");
+    }
+
+    const embed = new EmbedBuilder()
+      .setColor("#171717")
+      .setTitle("NEON SOFTWARE")
+      .setDescription(
+        "Welcome to **NEON SOFTWARE**!\n\n" +
+        "To gain access to the server, you must first verify your Discord account.\n\n" +
+        "Click the button below to begin the verification process.\n\n" +
+        "🔒 Secure verification\n" +
+        "⚡ Automatic role assignment"
+      )
+      .setFooter({
+        text: "NEON SOFTWARE • Verification"
+      });
+
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setLabel("Verify with Discord")
+        .setStyle(ButtonStyle.Link)
+        .setURL(CONFIG.BASE_URL + "/login")
+    );
+
+    const messages = await channel.messages.fetch({
+      limit: 50
+    });
+
+    const existing = messages.find(message =>
+      message.author.id === bot.user.id &&
+      message.embeds.some(embed =>
+        embed.title === "NEON SOFTWARE"
+      )
+    );
+
+    if (existing) {
+      await existing.edit({
+        embeds: [embed],
+        components: [row]
+      });
+    } else {
+      await channel.send({
+        embeds: [embed],
+        components: [row]
+      });
+    }
+
+    console.log("VERIFICATION PANEL READY");
+
+  } catch (error) {
+    console.error("Panel error:", error);
+  }
+});
+
+// =====================================
+// START SERVER
+// =====================================
+
+app.listen(CONFIG.PORT, "0.0.0.0", () => {
+  console.log("NEON SOFTWARE WEBSITE STARTED");
+  console.log("PORT:", CONFIG.PORT);
+});
+
+// =====================================
+// START BOT
+// =====================================
+
+bot.login(CONFIG.BOT_TOKEN).catch(error => {
+  console.error("BOT LOGIN ERROR:", error);
+});
